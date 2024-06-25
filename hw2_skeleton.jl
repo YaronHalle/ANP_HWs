@@ -81,7 +81,7 @@ function GenerateObservationFromBeacons(𝒫::POMDPscenario, x::Array{Float64, 1
 
     # Calculate the distance for each row in X
     for i in 1:size(beacons_x, 1)
-        distances[i] = sqrt(sum((beacons_x[i, :] .- x) .^ 2))
+        distances[i] = norm(beacons_x[i, :] .- x)
     end
 
     for (index, distance) in enumerate(distances)
@@ -103,8 +103,15 @@ function GenerateObservationFromBeacons(𝒫::POMDPscenario, x::Array{Float64, 1
     return nothing    
 end    
 
+function plot_circle!(cx, cy)
+    θ = range(0, stop=2π, length=100)
+    x = cx .+ 1 .* cos.(θ)
+    y = cy .+ 1 .* sin.(θ)
+    plot!(x, y, label="", lw=2)
+end
 
-function q2b()
+
+function q3()
     # definition of the random number generator with seed 
     rng = MersenneTwister(1)
     μ0 = [0.0,0.0]
@@ -128,70 +135,111 @@ function q2b()
                       rng = rng , beacons=beacons, d=d, rmin=rmin) 
     
     xgt0 = [-0.5, -0.2]           
-    ak = [0.1, 0.1]   
-    T=100        
+    T = 100
+    N = 10
+    ak = [[0.1, 0.1 * (j / 5)] for j in 1:N]  
 
-    τ = [xgt0]
+    # generating the trajectory
+    τ_s = [deepcopy([xgt0]) for _ in 1:N]
+    
     # generate motion trajectory
-    for i in 1:T-1
-        push!(τ, SampleMotionModel(𝒫, ak, τ[end]))
-    end 
+    for j in 1:N
+        for i in 1:T-1
+            push!(τ_s[j], SampleMotionModel(𝒫, ak[j], τ_s[j][end]))
+        end  
+    end
 
     # generate observation trajectory
-    τobsbeacons = []
-    for i in 1:T
-        push!(τobsbeacons, GenerateObservationFromBeacons(𝒫, τ[i], true))
-    end  
-
-    # generate beliefs dead reckoning 
-    τbp = [b0]
-    
-    for i in 1:T-1
-        push!(τbp, PropagateBelief(τbp[end],  𝒫, ak))
+    τobs = [[] for _ in 1:N]
+    for j in 1:N
+        for i in 1:T
+            push!(τobs[j], GenerateObservationFromBeacons(𝒫, τ_s[j][i], false))
+        end  
     end
-        
+    
+    # generate beliefs dead reckoning 
+    τbp = [[deepcopy(b0)] for _ in 1:N]
+    
+    for j in 1:N
+        for i in 1:T-1
+            push!(τbp[j], PropagateBelief(τbp[j][end],  𝒫, ak[j]))
+        end
+    end
+    
     #generate posteriors 
-    τb = [b0]
-    for i in 1:T-1
-        if τobsbeacons[i+1] === nothing
-            push!(τb, PropagateBelief(τb[end],  𝒫, ak))
-        else
-            push!(τb, PropagateUpdateBeliefBeacon(τb[end],  𝒫, ak, τobsbeacons[i+1].obs, τobsbeacons[i+1].index, τobsbeacons[i+1].Σv))
+    τb = [[deepcopy(b0)] for _ in 1:N]
+    for j in 1:N
+        for i in 1:T-1
+            if τobs[j][i+1] === nothing
+                push!(τb[j], PropagateBelief(τb[j][end],  𝒫, ak[j]))
+            else
+                push!(τb[j], PropagateUpdateBeliefBeacon(τb[j][end],  𝒫, ak[j], τobs[j][i+1].obs, τobs[j][i+1].index, τobs[j][i+1].Σv))
+            end
         end
     end
 
-    # plots 
-    dr=scatter([x[1] for x in τ], [x[2] for x in τ], label="")
-    scatter!(beacons[:, 1], beacons[:, 2], label="beacons", markershape=:utriangle)
-    for i in 1:T
-        covellipse!(τbp[i].μ, τbp[i].Σ, showaxes=true, n_std=3, label="")
-    end
-    savefig(dr,"q2b_dr.pdf")
+
     
-    ttt=scatter([x[1] for x in τ], [x[2] for x in τ], label="")
+    # plots 
+    dr=scatter([x[1] for x in τ_s[1]], [x[2] for x in τ_s[1]], label="gt-1")
     scatter!(beacons[:, 1], beacons[:, 2], label="beacons", markershape=:utriangle)
-    for i in 1:T
-        covellipse!(τb[i].μ, τb[i].Σ, showaxes=true, n_std=3 , label="")
+    for j in 2:N
+        scatter!([x[1] for x in τ_s[j]], [x[2] for x in τ_s[j]], label="gt-$j")
     end
-    savefig(ttt,"q2b_tr.pdf")
+    savefig(dr,"q3_traj.pdf")
 
-    err = []
-    tr_cov = []
+    cost = []
     # plot estimation error
-    for i in 1:T
-        push!(err, norm(τbp[i].μ - τ[i]))
-        push!(tr_cov, sqrt(tr(τbp[i].Σ)))
+    for j in 1:N
+        push!(cost, norm(det(τb[j][end].Σ)))
     end
-    pl = scatter(1:T, err, show=true, label="estimation errors over time")
-    savefig(pl,"q2b_squared_norms.pdf")
-
-    pl = scatter(1:T, tr_cov, show=true, label=" estimation covariance over time")
-    savefig(pl,"q2b_trace.pdf")
+    pl = scatter(1:N, cost, show=true, label="Cost over trajectory index")
+    savefig(pl,"q3_cost.pdf")
 
 end
 
 
-function q2a()
+function plot_q2(τ, beacons, τb, τbp, suffix, T)
+    # plots 
+    dr1=scatter([x[1] for x in τ], [x[2] for x in τ], label="")
+    scatter!(beacons[:, 1], beacons[:, 2], label="beacons", markershape=:utriangle)
+    # Plot circles around each beacon
+    for i in 1:size(beacons, 1)
+        plot_circle!(beacons[i, 1], beacons[i, 2])
+    end
+    savefig(dr1,"tran_$suffix.pdf")
+
+    dr=scatter([x[1] for x in τ], [x[2] for x in τ], label="")
+    scatter!(beacons[:, 1], beacons[:, 2], label="beacons", markershape=:utriangle)
+    for i in 1:T
+        covellipse!(τbp[i].μ, τbp[i].Σ, showaxes=true, n_std=3, label="")
+    end
+    savefig(dr,"qa_dr_$suffix.pdf")
+    
+    ttt=scatter([x[1] for x in τ], [x[2] for x in τ], label="")
+    scatter!(beacons[:, 1], beacons[:, 2], label="beacons", markershape=:utriangle)
+    for i in 1:T
+        covellipse!(τb[i].μ, τb[i].Σ, showaxes=true, n_std=3 , label="")
+    end
+    savefig(ttt,"q2_tr_$suffix.pdf")
+
+    err = []
+    tr_cov = []
+    # plot estimation error
+    for i in 1:T
+        push!(err, norm(τb[i].μ - τ[i]))
+        push!(tr_cov, sqrt(tr(τb[i].Σ)))
+    end
+    pl = scatter(1:T, err, show=true, label="estimation errors over time")
+    savefig(pl, "q2_squared_norms_$suffix.pdf")
+
+    pl = scatter(1:T, tr_cov, show=true, label=" estimation covariance over time")
+    savefig(pl,"q2_trace_$suffix.pdf")
+
+end
+
+
+function q2()
     # definition of the random number generator with seed 
     rng = MersenneTwister(1)
     μ0 = [0.0,0.0]
@@ -225,9 +273,11 @@ function q2a()
     end 
 
     # generate observation trajectory
-    τobsbeacons = []
+    τobsbeacons_fixed = []
+    τobsbeacons_not_fixed = []
     for i in 1:T
-        push!(τobsbeacons, GenerateObservationFromBeacons(𝒫, τ[i], false))
+        push!(τobsbeacons_not_fixed, GenerateObservationFromBeacons(𝒫, τ[i], false))
+        push!(τobsbeacons_fixed, GenerateObservationFromBeacons(𝒫, τ[i], true))
     end  
 
     # generate beliefs dead reckoning 
@@ -238,42 +288,21 @@ function q2a()
     end
         
     #generate posteriors 
-    τb = [b0]
+    τb_fixed = [b0]
+    τb_not_fixed = [b0]
     for i in 1:T-1
-        if τobsbeacons[i+1] === nothing
-            push!(τb, PropagateBelief(τb[end],  𝒫, ak))
+        if τobsbeacons_fixed[i+1] === nothing
+            push!(τb_fixed, PropagateBelief(τb_fixed[end],  𝒫, ak))
+            push!(τb_not_fixed, PropagateBelief(τb_not_fixed[end],  𝒫, ak))
         else
-            push!(τb, PropagateUpdateBeliefBeacon(τb[end],  𝒫, ak, τobsbeacons[i+1].obs, τobsbeacons[i+1].index, τobsbeacons[i+1].Σv))
+            push!(τb_fixed, PropagateUpdateBeliefBeacon(τb_fixed[end],  𝒫, ak, τobsbeacons_fixed[i+1].obs, τobsbeacons_fixed[i+1].index, τobsbeacons_fixed[i+1].Σv))
+            push!(τb_not_fixed, PropagateUpdateBeliefBeacon(τb_not_fixed[end],  𝒫, ak, τobsbeacons_not_fixed[i+1].obs, τobsbeacons_not_fixed[i+1].index, τobsbeacons_not_fixed[i+1].Σv))
         end
     end
 
     # plots 
-    dr=scatter([x[1] for x in τ], [x[2] for x in τ], label="")
-    scatter!(beacons[:, 1], beacons[:, 2], label="beacons", markershape=:utriangle)
-    for i in 1:T
-        covellipse!(τbp[i].μ, τbp[i].Σ, showaxes=true, n_std=3, label="")
-    end
-    savefig(dr,"q2a_dr.pdf")
-    
-    ttt=scatter([x[1] for x in τ], [x[2] for x in τ], label="")
-    scatter!(beacons[:, 1], beacons[:, 2], label="beacons", markershape=:utriangle)
-    for i in 1:T
-        covellipse!(τb[i].μ, τb[i].Σ, showaxes=true, n_std=3 , label="")
-    end
-    savefig(ttt,"q2a_tr.pdf")
-
-    err = []
-    tr_cov = []
-    # plot estimation error
-    for i in 1:T
-        push!(err, norm(τbp[i].μ - τ[i]))
-        push!(tr_cov, sqrt(tr(τbp[i].Σ)))
-    end
-    pl = scatter(1:T, err, show=true, label="estimation errors over time")
-    savefig(pl,"q2a_squared_norms.pdf")
-
-    pl = scatter(1:T, tr_cov, show=true, label=" estimation covariance over time")
-    savefig(pl,"q2a_trace.pdf")
+    plot_q2(τ, beacons, τb_fixed, τbp, "fixed", T)
+    plot_q2(τ, beacons, τb_not_fixed, τbp, "changing", T)
 
 end
 
@@ -343,9 +372,9 @@ end
 
 function main()
     # definition of the random number generator with seed 
-    #q1()
-    q2a()
-    q2b()
+    q1()
+    q2()
+    q3()
 end 
 
 main()
