@@ -87,7 +87,7 @@ function GenerateObservationFromBeacons(𝒫::POMDPscenario, x::Array{Float64, 1
     for (index, distance) in enumerate(distances)
         if distance <= 𝒫.d
             if fixed_v
-                Σv = (0.01) * (0.01) * [1.0 0.0; 0.0 1.0]
+                Σv = 𝒫.Σv
                 v_dist = MvNormal([0., 0.], Σv)
             else
                 r = max(rmin, distance)
@@ -370,11 +370,9 @@ function q1()
 end
 
 
-function main()
-    # definition of the random number generator with seed 
-    q1()
-    q2()
-    q3()
-end 
-
-main()
+# function main()
+#     # definition of the random number generator with seed 
+#     q1()
+#     q2()
+#     q3()
+# end 
