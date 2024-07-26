@@ -10,59 +10,6 @@ using Parameters
 using StatsBase
 
 
-@with_kw struct ParticleBelief
-    particles::Array{Array{Float64, 1}}
-    weights::Array{Float64, 1}
-end
-
-function scatterParticles(belief::ParticleBelief, label::String)
-    x = [p[1] for p in belief.particles]
-    y = [p[2] for p in belief.particles]
-    w = belief.weights
-    scatter!(x, y, markersize=w .*50, markercolor=:auto, markerstrokewidth=0, alpha=0.5, label=label)
-end
-
-function InitParticleBelief(n_particles::Int, μ0::Array{Float64, 1}, Σ0::Array{Float64, 2})::ParticleBelief
-    # add your code here
-    return ParticleBelief(particles, weights)
-    
-end
-function PropagateBelief(b::ParticleBelief, 𝒫::POMDPscenario, a::Array{Float64, 1})::ParticleBelief
-    # add your code here
-    return ParticleBelief(new_particles, new_weights)
-end
-
-function obs_likelihood(𝒫::POMDPscenario, o::Array{Float64, 1}, x::Array{Float64, 1})::Float64
-    μ_z = # add your code here
-    return pdf(MvNormal(μ_z , 𝒫.Σv), o)
-end
-
-function PropagateUpdateBelief(b::ParticleBelief, 𝒫::POMDPscenario, a::Array{Float64, 1}, o::Array{Float64, 1})::ParticleBelief
-    # add your code here
-    return ParticleBelief(new_particles, new_weights)
-end  
-
-function resample(b::ParticleBelief)::ParticleBelief
-    # add your code here
-    # Hint: use the function sample to sample from the particles and use the flag replace=true to sample with replacement
-end
-
-function SampleMotionModel(𝒫::POMDPscenario, a::Array{Float64, 1}, x::Array{Float64, 1})
-    # add your code here
-end 
-
-
-function GenerateObservationFromBeacons(𝒫::POMDPscenario, x::Array{Float64, 1})::Union{NamedTuple, Nothing}
-    distances = # add your code here
-    for (index, distance) in enumerate(distances)
-        if distance <= 𝒫.d
-            obs = # add your code here
-            return (obs=obs, index=index) 
-        end    
-    end 
-    return nothing    
-end    
-
 
 function TransitBeliefMDP(b::FullNormal, 𝒫::POMDPscenario, a::Array{Float64, 1})::FullNormal
     p_b = PropagateBelief(b, 𝒫, a)
@@ -75,23 +22,42 @@ function TransitBeliefMDP(b::FullNormal, 𝒫::POMDPscenario, a::Array{Float64, 
     end
 end
 
-function selectAction(b::FullNormal, d::Int32, lambda::Float64, n::Int32, 𝒫::POMDPscenario, A::Array{Array{Float64, 1}, 1}, x_g::Array{Float64, 1}, discount_factor::Float64)::Tuple{Array{Float64, 1}, Float64}
+function selectAction(b::FullNormal, d::Int64, lambda::Float64, n::Int64, 𝒫::POMDPscenario, A::Array{Float64, 2}, x_g::Array{Float64, 1}, discount_factor::Float64)::Tuple{Union{Array{Float64, 1}, Nothing}, Float64}
     if d == 0
         return nothing, 0.0
+    end
     b_a, b_v = nothing, Inf
-    for a in A
+    for ai in 1:size(A,1)
+        # println("ai: ", ai, d)
         q = 0.0
         for i in 1:n
-            p_b = TransitBeliefMDP(b, 𝒫, a)
-            r =  norm(mean(p_b) - x_g) + lambda * det(var(p_b))
+            p_b = TransitBeliefMDP(b, 𝒫, A[ai, :])
+            r =  norm(mean(p_b) - x_g) + lambda * det(cov(p_b))
             _, v_c = selectAction(p_b, d-1, lambda, n, 𝒫, A, x_g, discount_factor)
-            q = q + value(r + discount_factor*v_c) / n
+            q = q + (r + discount_factor*v_c) / n
         end
         if q < b_v
-            b_a, b_v = a, q
+            b_a, b_v = A[ai, :], q
         end
     end
     return b_a, b_v
+end
+
+function get_trajectory(xgt0::Array{Float64, 1}, b0::FullNormal, T::Int64, deapth::Int64, λ::Float64, n::Int64, 𝒫::POMDPscenario, action::Array{Float64, 2}, x_goal::Array{Float64, 1}, discount_factor::Float64)
+    τ = [xgt0]
+    τp = [b0]
+    τobsbeacons = []
+    for i in 1:T
+        ak, _ = selectAction(τp[end], deapth, λ, n, 𝒫, action, x_goal, discount_factor)
+        push!(τ, SampleMotionModel(𝒫, ak, τ[end]))
+        push!(τobsbeacons, GenerateObservationFromBeacons(𝒫, τ[end], false))
+        if τobsbeacons[end] === nothing
+            push!(τp, PropagateBelief(τp[end],  𝒫, ak))
+        else
+            push!(τp, PropagateUpdateBeliefBeacon(τp[end],  𝒫, ak, τobsbeacons[end].obs, τobsbeacons[end].index, τobsbeacons[end].Σv))
+        end
+    end 
+    return τ, τobsbeacons, τp
 end
 
 function main()
@@ -103,7 +69,7 @@ function main()
     rmin = 0.1
     # set beacons locations 
     beacons =  [0.0 0.0; 0.0 4.0; 0.0 8.0; 4.0 0.0; 4.0 4.0; 4.0 8.0; 8.0 0.0; 8.0 4.0; 8.0 8.0]
-    action = [[1,0], [-1,0], [0,1], [0,-1], [1/sqrt(2),1/sqrt(2)], [-1/sqrt(2),1/sqrt(2)], [1/sqrt(2),-1/sqrt(2)], [-1/sqrt(2),-1/sqrt(2)], [0,0]]
+    action = [1.0 0.0; -1.0 0.0; 0.0 1.0; 0.0 -1.0; 1/sqrt(2) 1/sqrt(2); -1/sqrt(2) 1/sqrt(2); 1/sqrt(2) -1/sqrt(2); -1/sqrt(2) -1/sqrt(2); 0.0 0.0;]
     𝒫 = POMDPscenario(F=[1.0 0.0; 0.0 1.0],
                       Σw=0.1^2*[1.0 0.0; 0.0 1.0],
                       Σv=[1.0 0.0; 0.0 1.0], 
@@ -117,76 +83,40 @@ function main()
     # initialize ground truth
     xgt0 = [-0.5, -0.2]               
     τ = [xgt0]      
-    x_goal = [11, 11]  
+    x_goal = [11.0, 11.0]  
 
     # select action Parameters
-    deapth = 8
-    n = 10
-    λ = 1
-    discount_factor = 0.9
+    deapth = [1, 1, 1, 3, 3, 3, 8, 8, 8, 8]
+    n = [1, 2, 3, 1, 2, 3, 1, 2, 3, 4]
+    λ = 1.0
+    discount_factor = 1.0
 
     # generate motion trajectory
-    τp = [b0]
-    τobsbeacons = []
-    for i in 1:T-1
-        ak, _ = selectAction(τp[end], deapth, λ, n, 𝒫, action, x_goal, discount_factor)
-        push!(τ, SampleMotionModel(𝒫, ak, τ[end]))
-        push!(τobsbeacons, GenerateObservationFromBeacons(𝒫, τ[i]))
-        if τobsbeacons[i+1] === nothing
-            push!(τb, PropagateBelief(τb[end],  𝒫, ak))
-        else
-            push!(τb, PropagateUpdateBelief(τb[end],  𝒫, ak, τobsbeacons[i+1].obs))
+    for i in 1:10
+        τ, τobsbeacons, τp = get_trajectory(xgt0, b0, T, deapth[i], λ, n[i], 𝒫, action, x_goal, discount_factor)
+
+        bplot =  scatter(beacons[:, 1], beacons[:, 2], label="beacons", markershape=:utriangle)
+        scatter!([x_goal[1]], [x_goal[2]], label="goal", markershape=:star5)
+        scatter!([x[1] for x in τ], [x[2] for x in τ], label="gt", markershape=:circle)
+        f_o = []
+        for j in 1:size(τobsbeacons, 1)
+            if τobsbeacons[j] !== nothing
+                x_sensor_i = 𝒫.beacons[τobsbeacons[j].index, :]
+                push!(f_o, τobsbeacons[j].obs + x_sensor_i)
+            end
         end
-    end 
+        scatter!([x[1] for x in f_o], [x[2] for x in f_o], label="observation", markershape=:square)
+        savefig(bplot,"trajectory$i.pdf")
 
-
-    bplot =  scatter(beacons[:, 1], beacons[:, 2], label="beacons", markershape=:utriangle)
-    savefig(bplot,"beacons.pdf")
-
-    
-    #generate posteriors without resampling
-    τb = [b0]
-    for i in 1:T-1
-        if τobsbeacons[i+1] === nothing
-            push!(τb, PropagateBelief(τb[end],  𝒫, ak))
-        else
-            push!(τb, PropagateUpdateBelief(τb[end],  𝒫, ak, τobsbeacons[i+1].obs))
+        dr=scatter([x[1] for x in τ], [x[2] for x in τ], label="gt")
+        scatter!(beacons[:, 1], beacons[:, 2], label="beacons", markershape=:utriangle)
+        scatter!([x_goal[1]], [x_goal[2]], label="goal", markershape=:star5)
+        for i in 1:T
+            covellipse!(τp[i].μ, τp[i].Σ, showaxes=true, n_std=3, label="step $i")
         end
+        savefig(dr,"dr$i.pdf")
     end
 
-    #generate posteriors with resampling
-    τbr = [b0]
-    for i in 1:T-1
-        if τobsbeacons[i+1] === nothing
-            push!(τbr, PropagateBelief(τbr[end],  𝒫, ak))
-        else
-            b = PropagateUpdateBelief(τbr[end],  𝒫, ak, τobsbeacons[i+1].obs)
-            b = resample(b)
-            push!(τbr, b)
-        end
-    end
-    
-    # plots 
-    dr=scatter([x[1] for x in τ], [x[2] for x in τ], label="gt")
-    scatter!(beacons[:, 1], beacons[:, 2], label="beacons", markershape=:utriangle)
-    for i in 1:T
-        scatterParticles(τbp[i], "$i")
-    end
-    savefig(dr,"dr.pdf")
-
-    tr=scatter([x[1] for x in τ], [x[2] for x in τ], label="gt")
-    scatter!(beacons[:, 1], beacons[:, 2], label="beacons", markershape=:utriangle)
-    for i in 1:T
-        scatterParticles(τb[i], "$i")
-    end
-    savefig(tr,"no_resampling.pdf")
-
-    tr2=scatter([x[1] for x in τ], [x[2] for x in τ], label="gt")
-    scatter!(beacons[:, 1], beacons[:, 2], label="beacons", markershape=:utriangle)
-    for i in 1:T
-        scatterParticles(τbr[i], "$i")
-    end
-    savefig(tr2,"resampling.pdf")
 
 end 
 
