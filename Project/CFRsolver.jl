@@ -2,6 +2,7 @@ using ProgressMeter
 
 using Random
 
+include("utils.jl")
 include("POSG.jl")
 
 
@@ -23,9 +24,10 @@ function MCInfoState(L::Integer)
     )
 end
 
-@with_kw struct ESCFRSolver
+mutable struct ESCFRSolver
     I::Dict{POSGInfoKey, MCInfoState}
     game::TagGame
+    sesstion::Int
 end
 
 function weighted_sample(rng::AbstractRNG, w::AbstractVector)
@@ -69,10 +71,12 @@ function CFR(solver::ESCFRSolver, h, i, t)
     current_player = get_player(game, h)
 
     if isterminal(game, h)
-        return utility(game, i, h)
+        solver.sesstion += 1
+        return 0.0
     elseif iszero(current_player) # chance player
-        h′ = chance_action_next_h(game, h)
-        return CFR(solver, h′, i, t)
+        h′ = chance_action_next_h(game, h, solver.sesstion)
+        r = c_reward(h′.pb, i)
+        return r + CFR(solver, h′, i, t)
     end
 
     k = infokey(game, h)
@@ -103,11 +107,11 @@ function CFR(solver::ESCFRSolver, h, i, t)
 end
 
 function update!(sol::ESCFRSolver, I, v_σ_Ia, v_σ, t)
-    (;α, β, γ) = sol.method
-    s_coeff = t^γ
+    #(;α, β, γ) = (1, 1, 1)
+    s_coeff = t^1
     for k in eachindex(v_σ_Ia)
         r = (1 - I.σ[k])*(v_σ_Ia[k] - v_σ)
-        r_coeff = r > 0.0 ? t^α : t^β
+        r_coeff = r > 0.0 ? t^1 : t^1
 
         I.r[k] += r_coeff*r
         I.s[k] += s_coeff*I.σ[k]
@@ -126,8 +130,10 @@ end
 function train!(solver::ESCFRSolver, N::Int; show_progress::Bool=false)
     regret_match!(solver)
     prog = Progress(N; enabled=show_progress)
-    h0 = initiPOSGHist(solver.game.num_player)
+    h0 = initiPOSGHist(solver.game.num_player, solver.game.num_particle, solver.game.a)
+    #scatterParticles(h0.pb, "T=0", solver.game.num_player, h0.xt)
     for t in 1:N
+        println(t)
         for i in 1:solver.game.num_player
             CFR(solver, h0, i, t)
         end

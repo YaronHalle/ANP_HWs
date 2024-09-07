@@ -27,12 +27,12 @@ function selectAction(b::FullNormal, d::Int64, lambda::Float64, n::Int64, 𝒫::
         return nothing, 0.0
     end
     b_a, b_v = nothing, Inf
+    r =  norm(mean(b) - x_g) + lambda * det(cov(b))
     for ai in 1:size(A,1)
         # println("ai: ", ai, d)
         q = 0.0
         for i in 1:n
             p_b = TransitBeliefMDP(b, 𝒫, A[ai, :])
-            r =  norm(mean(p_b) - x_g) + lambda * det(cov(p_b))
             _, v_c = selectAction(p_b, d-1, lambda, n, 𝒫, A, x_g, discount_factor)
             q = q + (r + discount_factor*v_c) / n
         end
@@ -83,17 +83,17 @@ function main()
     # initialize ground truth
     xgt0 = [-0.5, -0.2]               
     τ = [xgt0]      
-    x_goal = [11.0, 11.0]  
+    x_goal = [2.0, 0.0]  
 
     # select action Parameters
-    deapth = [1, 1, 1, 3, 3, 3, 8, 8, 8, 8]
-    n = [1, 2, 3, 1, 2, 3, 1, 2, 3, 4]
-    λ = 1.0
+    deapth = [2, 2, 2, 2, 2, 2, 2, 2, 2, 2]
+    n = [8, 8, 8, 8, 8, 8, 8, 8, 8, 8]
+    λ = [0.5, 0.5, 0.5, 0.5, 0.5, 30., 30., 30., 30., 30.]
     discount_factor = 1.0
 
     # generate motion trajectory
     for i in 1:10
-        τ, τobsbeacons, τp = get_trajectory(xgt0, b0, T, deapth[i], λ, n[i], 𝒫, action, x_goal, discount_factor)
+        τ, τobsbeacons, τp = get_trajectory(xgt0, b0, T, deapth[i], λ[i], n[i], 𝒫, action, x_goal, discount_factor)
 
         bplot =  scatter(beacons[:, 1], beacons[:, 2], label="beacons", markershape=:utriangle)
         scatter!([x_goal[1]], [x_goal[2]], label="goal", markershape=:star5)
@@ -105,6 +105,11 @@ function main()
                 push!(f_o, τobsbeacons[j].obs + x_sensor_i)
             end
         end
+        final_cost = norm(mean(τp[end]) - x_goal) + λ[i] * det(cov(τp[end]))
+        c_n = n[i]
+        c_d = deapth[i]
+        c_lam = λ[i]
+        println("n:$c_n, deapth:$c_d, λ:$c_lam, final cost:$final_cost",)
         scatter!([x[1] for x in f_o], [x[2] for x in f_o], label="observation", markershape=:square)
         savefig(bplot,"trajectory$i.pdf")
 
