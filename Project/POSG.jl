@@ -27,7 +27,7 @@ function initiPOSGHist(num_player::Int64, num_particle::Int64, a::Float64)
     return POSGHist(action_obs_hist, x0, pb, 0)
 end
 
-@with_kw struct TagGame
+@with_kw struct TagGame 
     num_particle::Int
     num_player::Int
     a::Float64
@@ -74,9 +74,9 @@ function c_reward(pb::ParticleBelief, player::Int)
             avg_r = avg_r + REWARD * weight
         end
     end
-    if avg_r != 0.0
-        println("player $player get reward $avg_r")
-    end
+    # if avg_r != 0.0
+    #     println("player $player get reward $avg_r")
+    # end
     return avg_r
 end
 

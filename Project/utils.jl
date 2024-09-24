@@ -1,6 +1,7 @@
 using LinearAlgebra
 using Plots
 
+
 x0 = [(sqrt(3)/8) 1/8; -(sqrt(3)/8) 1/8; 0 -0.25]
 
 function scatterParticles(belief::ParticleBelief, label::String, num_player::Int, xt::Array{Float64, 2})
@@ -21,3 +22,4 @@ function scatterParticles(belief::ParticleBelief, label::String, num_player::Int
     end
     savefig(dr,"PB$label.pdf")
 end
+
